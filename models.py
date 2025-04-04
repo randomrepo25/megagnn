@@ -1,5 +1,5 @@
 import torch.nn as nn
-from torch_geometric.nn import GINEConv, BatchNorm, Linear, GATConv, PNAConv, RGCNConv, to_hetero
+from torch_geometric.nn import GINEConv, BatchNorm, Linear, GATConv, PNAConv, to_hetero
 from torch_geometric.nn.aggr import DegreeScalerAggregation
 from torch_geometric.utils import to_dense_batch
 from torch_geometric.data import HeteroData
@@ -11,6 +11,8 @@ from torch_scatter import scatter
 from torch_geometric.utils import degree
 from genagg import GenAgg
 from genagg.MLPAutoencoder import MLPAutoencoder
+
+from rgcn import FastRGCNConv
 import math 
 import time
 
@@ -329,9 +331,10 @@ class MultiMPNN(torch.nn.Module):
                     ("node", 'rev_to', 'node'): self.edge_emb_rev(data['node', 'rev_to', 'node'].edge_attr),    
                 }
             simp_edge_batch_dict = data.simp_edge_batch_dict if self.args.flatten_edges else None
+            currency_info_dict = data.currency_info_dict if self.args.model == 'rgcn' or self.args.model == 'rgcne' else None
 
             # Message Passing Layers
-            x_dict, edge_attr_dict = self.gnn(x_dict, data.edge_index_dict, edge_attr_dict, simp_edge_batch_dict)
+            x_dict, edge_attr_dict = self.gnn(x_dict, data.edge_index_dict, edge_attr_dict, simp_edge_batch_dict, currency_info_dict)
             x = x_dict['node']
             edge_attr = edge_attr_dict['node', 'to', 'node']
 
@@ -356,12 +359,12 @@ class MultiMPNN(torch.nn.Module):
             x = self.node_emb(data.x)
             edge_attr = self.edge_emb(data.edge_attr) 
             simp_edge_batch = data.simp_edge_batch if self.args.flatten_edges else None
-
+            currency_info = data.currency_info if self.args.model == 'rgcn' or self.args.model == 'rgcne' else None
             if self.args.edge_agg_type =='adamm':
                 edge_attr = edge_attr + self.edge_direction_encoder(data.edge_direction)
 
             # Message Passing Layers
-            x, edge_attr = self.gnn(x, data.edge_index, edge_attr, simp_edge_batch)
+            x, edge_attr = self.gnn(x, data.edge_index, edge_attr, simp_edge_batch, currency_info)
 
             # Prediction Heads
             if self.args.task == 'edge_class':
@@ -448,7 +451,13 @@ class GnnHelper(torch.nn.Module):
                            aggregators=aggregators, scalers=scalers, deg=deg,
                            edge_dim=n_hidden, towers=5, pre_layers=1, post_layers=1,
                            divide_input=False)
-                
+            elif args.model == 'rgcn':
+                conv = FastRGCNConv(in_channels=n_hidden, out_channels=n_hidden, num_relations=15,
+                                use_edge_attr=False)
+            elif args.model == 'rgcne':
+                conv = FastRGCNConv(in_channels=n_hidden, out_channels=n_hidden, num_relations=15,
+                                use_edge_attr=True)
+
             if self.edge_updates: self.emlps.append(nn.Sequential(
                 nn.Linear(3 * self.n_hidden, self.n_hidden),
                 nn.ReLU(),
@@ -466,7 +475,7 @@ class GnnHelper(torch.nn.Module):
             self.edge_agg = MultiEdgeAggModule(n_hidden, agg_type=args.edge_agg_type, index=index_)
         
 
-    def forward(self, x, edge_index, edge_attr, simp_edge_batch=None):
+    def forward(self, x, edge_index, edge_attr, simp_edge_batch=None, currency_info=None):
         times= None # TODO: Not implemented yet
 
         if self.edge_agg_type == 'adamm':
@@ -484,12 +493,24 @@ class GnnHelper(torch.nn.Module):
             for i in range(self.num_gnn_layers):
                 if self.flatten_edges:
                     n_edge_index, n_edge_attr, inverse_indices  = self.edge_aggrs[i](edge_index, edge_attr, simp_edge_batch, times)
-                    x = (x + F.relu(self.batch_norms[i](self.convs[i](x, n_edge_index, n_edge_attr)))) / 2
+
+                    if self.args.model == 'rgcn' or self.args.model == 'rgcne':
+                        _, inverse_indices = torch.unique(simp_edge_batch, return_inverse=True)
+                        n_currency_type = scatter(currency_info, inverse_indices, dim=0, reduce='mean')
+                        x_new = self.convs[i](x, n_edge_index, n_edge_attr, edge_type=n_currency_type)
+                    else:
+                        x_new = self.convs[i](x, n_edge_index, n_edge_attr)
+
+                    x = (x + F.relu(self.batch_norms[i](x_new))) / 2
                     if self.edge_updates: 
                         remapped_edge_attr = torch.index_select(n_edge_attr, 0, inverse_indices) # artificall node attributes 
                         edge_attr = edge_attr + self.emlps[i](torch.cat([x[src], remapped_edge_attr, edge_attr], dim=-1)) / 2
                 else:
-                    x = (x + F.relu(self.batch_norms[i](self.convs[i](x, edge_index, edge_attr)))) / 2
+                    if self.args.model == 'rgcn' or self.args.model == 'rgcne':
+                        n_new = self.convs[i](x, edge_index, edge_attr, edge_type=currency_info)
+                    else:
+                        n_new = self.convs[i](x, edge_index, edge_attr) 
+                    x = (x + F.relu(self.batch_norms[i](n_new))) / 2
                     if self.edge_updates: 
                         edge_attr = edge_attr + self.emlps[i](torch.cat([x[src], x[dst], edge_attr], dim=-1)) / 2
                     
