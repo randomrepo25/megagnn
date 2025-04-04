@@ -53,7 +53,7 @@ python main.py --data Small_HI --model rgcn --emlps --n_epochs 80 --task edge_cl
 ```bash
 python main.py --data Small_HI --model rgcne --emlps --n_epochs 80 --task edge_class
 ```
-- MEGA(PNA)-R-GCN (Unidirectional MP)
+- MEGA(PNA)-R-GCNE (Unidirectional MP)
 ```bash
 python main.py --data Small_HI --model rgcne --emlps --flatten_edges --edge_agg_type pna --n_epochs 80 --task edge_class
 ```
