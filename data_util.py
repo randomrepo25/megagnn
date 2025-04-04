@@ -173,7 +173,7 @@ def z_norm(data):
     std = torch.where(std == 0, torch.tensor(1, dtype=torch.float32).cpu(), std)
     return (data - data.mean(0).unsqueeze(0)) / std
 
-def create_hetero_obj(x,  y,  edge_index,  edge_attr, timestamps, args, simp_edge_batch=None, batch=None):
+def create_hetero_obj(x,  y,  edge_index,  edge_attr, timestamps, args, simp_edge_batch=None, currency_info=None ,batch=None):
     '''Creates a heterogenous graph object for reverse message passing'''
     data = HeteroGraphData()
 
@@ -187,6 +187,10 @@ def create_hetero_obj(x,  y,  edge_index,  edge_attr, timestamps, args, simp_edg
     data['node', 'rev_to', 'node'].edge_index = edge_index.flipud()
     data['node', 'to', 'node'].edge_attr = edge_attr
     data['node', 'rev_to', 'node'].edge_attr = edge_attr
+
+    if args.model == 'rgcn' or args.model == 'rgcne':
+        data['node', 'to', 'node'].currency_info = currency_info
+        data['node', 'rev_to', 'node'].currency_info = currency_info
 
     if args.flatten_edges:
         data['node', 'to', 'node'].simp_edge_batch = simp_edge_batch
@@ -216,4 +220,29 @@ def find_parallel_edges(edge_index):
         simplified_edge_batch.append(simplified_edge_mapping[tuple_edge])
     simplified_edge_batch = torch.LongTensor(simplified_edge_batch)
 
+    return simplified_edge_batch
+
+def find_parallel_edges_with_types(edge_index, edge_types=None):
+    simplified_edge_mapping = {}
+    simplified_edge_batch = []
+    i = 0
+    
+    if edge_types is not None:
+        # If edge types are provided, consider both edge and its type
+        for idx, edge in enumerate(edge_index.T):
+            tuple_edge_with_type = (*edge.tolist(), edge_types[idx].item() if torch.is_tensor(edge_types[idx]) else edge_types[idx])
+            if tuple_edge_with_type not in simplified_edge_mapping:
+                simplified_edge_mapping[tuple_edge_with_type] = i
+                i += 1
+            simplified_edge_batch.append(simplified_edge_mapping[tuple_edge_with_type])
+    else:
+        # Original behavior when edge types are not provided
+        for edge in edge_index.T:
+            tuple_edge = tuple(edge.tolist())
+            if tuple_edge not in simplified_edge_mapping:
+                simplified_edge_mapping[tuple_edge] = i
+                i += 1
+            simplified_edge_batch.append(simplified_edge_mapping[tuple_edge])
+            
+    simplified_edge_batch = torch.LongTensor(simplified_edge_batch)
     return simplified_edge_batch
