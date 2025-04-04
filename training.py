@@ -24,6 +24,7 @@ def train_homo(tr_loader, val_loader, te_loader, tr_inds, val_inds, te_inds, mod
     #training
     best_val_f1 = 0
     for epoch in range(config.epochs):
+        logging.info(f'****** EPOCH {epoch} ******')
         total_loss = total_examples = 0
         preds = []
         ground_truths = []
