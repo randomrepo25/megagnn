@@ -44,6 +44,23 @@ python main.py --data Small_HI --model gin --emlps --reverse_mp --ego --flatten_
 python main.py --data Small_HI --model pna --emlps --reverse_mp --ego --flatten_edges --edge_agg_type pna --n_epochs 80 --save_model --task edge_class
 ```
 
+| To run the rebuttal experiments please run the below commands
+- R-GCN
+```bash
+python main.py --data Small_HI --model rgcn --emlps --n_epochs 80 --task edge_class
+```
+- R-GCNE
+```bash
+python main.py --data Small_HI --model rgcne --emlps --n_epochs 80 --task edge_class
+```
+- MEGA(PNA)-R-GCN (Unidirectional MP)
+```bash
+python main.py --data Small_HI --model rgcne --emlps --flatten_edges --edge_agg_type pna --n_epochs 80 --task edge_class
+```
+
+
+
+
 ### Acknowledgements
 
 We used the codebase of [Multi-GNN](https://github.com/IBM/Multi-GNN) and [GenAgg](https://github.com/Acciorocketships/generalised-aggregation) and thank their authors for their excellent work.
